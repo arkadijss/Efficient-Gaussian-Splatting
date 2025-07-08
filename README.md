@@ -7,4 +7,4 @@ The project authors are Arkādijs Sergejevs and Leon Lemke.
 
 ## Acknowledgments
 
-This project is based on the great work [3D Gaussian Splatting](https://github.com/graphdeco-inria/gaussian-splatting).
+This project is based on the great works [3D Gaussian Splatting](https://github.com/graphdeco-inria/gaussian-splatting), [Mini-Splatting](https://github.com/fatPeter/mini-splatting).

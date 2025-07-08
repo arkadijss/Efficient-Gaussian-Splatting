@@ -69,6 +69,7 @@ class PipelineParams(ParamGroup):
         self.compute_cov3D_python = False
         self.debug = False
         self.antialiasing = False
+        self.method = "orig"
         super().__init__(parser, "Pipeline Parameters")
 
 class OptimizationParams(ParamGroup):
