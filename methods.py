@@ -105,14 +105,16 @@ class MiniSplatting(Method):
         gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
 
         area_max = render_pkg["area_max"]
+        #print(f"Gauss: {self.gaussians._xyz.shape} | mask blur {mask_blur.shape} | area max {area_max.shape}")
+
         mask_blur = torch.logical_or(mask_blur, area_max>(image.shape[1]*image.shape[2]/5000))
 
         if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0 and iteration % 5000!=0 and gaussians._xyz.shape[0]<args.num_max:  
             size_threshold = 20 if iteration > opt.opacity_reset_interval else None
             gaussians.densify_and_prune_split(opt.densify_grad_threshold, 
                                             0.005, scene.cameras_extent, 
-                                            size_threshold, mask_blur)
-            mask_blur = torch.zeros(gaussians._xyz.shape[0], device='cuda')
+                                            size_threshold, mask_blur, radii)
+            self.mask_blur = torch.zeros(gaussians._xyz.shape[0], device='cuda')
             
         if iteration%5000==0:
             out_pts_list=[]
@@ -148,7 +150,7 @@ class MiniSplatting(Method):
 
             gaussians.reinitial_pts(out_pts_merged, gt_merged)
             gaussians.training_setup(opt)
-            mask_blur = torch.zeros(gaussians._xyz.shape[0], device='cuda')
+            self.mask_blur = torch.zeros(gaussians._xyz.shape[0], device='cuda')
             torch.cuda.empty_cache()
             viewpoint_stack = scene.getTrainCameras().copy()
 
