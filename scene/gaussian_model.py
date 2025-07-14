@@ -19,6 +19,9 @@ from utils.system_utils import mkdir_p
 from plyfile import PlyData, PlyElement
 from utils.sh_utils import RGB2SH
 from simple_knn._C import distCUDA2
+from bitarray import bitarray
+from collections import OrderedDict
+from os.path import join
 from utils.graphics_utils import BasicPointCloud
 from utils.general_utils import strip_symmetric, build_scaling_rotation
 
@@ -52,10 +55,15 @@ class GaussianModel:
         self.optimizer_type = optimizer_type
         self.max_sh_degree = sh_degree  
         self._xyz = torch.empty(0)
+        self._xyz_q = torch.empty(0)
         self._features_dc = torch.empty(0)
+        self._features_dc_q = torch.empty(0)
         self._features_rest = torch.empty(0)
+        self._features_rest_q = torch.empty(0)
         self._scaling = torch.empty(0)
+        self._scaling_q = torch.empty(0)
         self._rotation = torch.empty(0)
+        self._rotation_q = torch.empty(0)
         self._opacity = torch.empty(0)
         self.max_radii2D = torch.empty(0)
         self.xyz_gradient_accum = torch.empty(0)
@@ -99,31 +107,62 @@ class GaussianModel:
         self.denom = denom
         self.optimizer.load_state_dict(opt_dict)
 
+    
     @property
     def get_scaling(self):
+        if len(self._scaling_q) == 0:
+            scaling = self._scaling
+        else:
+            scaling = self._scaling_q
+        return self.scaling_activation(scaling)
+
+    @property
+    def get_scaling_nq(self):
         return self.scaling_activation(self._scaling)
-    
+
     @property
     def get_rotation(self):
-        return self.rotation_activation(self._rotation)
-    
+        if len(self._rotation_q) == 0:
+            rotation = self._rotation
+        else:
+            rotation = self._rotation_q
+        return self.rotation_activation(rotation)
+
     @property
     def get_xyz(self):
-        return self._xyz
+        if len(self._xyz_q) == 0:
+            xyz = self._xyz
+        else:
+            xyz = self._xyz_q
+        return xyz
     
     @property
     def get_features(self):
-        features_dc = self._features_dc
-        features_rest = self._features_rest
+        if len(self._features_dc_q) == 0:
+            features_dc = self._features_dc
+        else:
+            features_dc = self._features_dc_q
+        if len(self._features_rest_q) == 0:
+            features_rest = self._features_rest
+        else:
+            features_rest = self._features_rest_q
         return torch.cat((features_dc, features_rest), dim=1)
     
     @property
     def get_features_dc(self):
-        return self._features_dc
+        if len(self._features_dc_q) == 0:
+            features_dc = self._features_dc
+        else:
+            features_dc = self._features_dc_q
+        return features_dc
     
     @property
     def get_features_rest(self):
-        return self._features_rest
+        if len(self._features_rest_q) == 0:
+            features_rest = self._features_rest
+        else:
+            features_rest = self._features_rest_q
+        return features_rest
     
     @property
     def get_opacity(self):
@@ -222,46 +261,89 @@ class GaussianModel:
                 param_group['lr'] = lr
                 return lr
 
-    def construct_list_of_attributes(self):
-        l = ['x', 'y', 'z', 'nx', 'ny', 'nz']
-        # All channels except the 3 DC
-        for i in range(self._features_dc.shape[1]*self._features_dc.shape[2]):
-            l.append('f_dc_{}'.format(i))
-        for i in range(self._features_rest.shape[1]*self._features_rest.shape[2]):
-            l.append('f_rest_{}'.format(i))
-        l.append('opacity')
-        for i in range(self._scaling.shape[1]):
-            l.append('scale_{}'.format(i))
-        for i in range(self._rotation.shape[1]):
-            l.append('rot_{}'.format(i))
-        return l
-
-    def save_ply(self, path):
-        mkdir_p(os.path.dirname(path))
-
-        xyz = self._xyz.detach().cpu().numpy()
-        normals = np.zeros_like(xyz)
-        f_dc = self._features_dc.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
-        f_rest = self._features_rest.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
-        opacities = self._opacity.detach().cpu().numpy()
-        scale = self._scaling.detach().cpu().numpy()
-        rotation = self._rotation.detach().cpu().numpy()
-
-        dtype_full = [(attribute, 'f4') for attribute in self.construct_list_of_attributes()]
-
-        elements = np.empty(xyz.shape[0], dtype=dtype_full)
-        attributes = np.concatenate((xyz, normals, f_dc, f_rest, opacities, scale, rotation), axis=1)
-        elements[:] = list(map(tuple, attributes))
-        el = PlyElement.describe(elements, 'vertex')
-        PlyData([el]).write(path)
 
     def reset_opacity(self):
         opacities_new = self.inverse_opacity_activation(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.01))
         optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "opacity")
         self._opacity = optimizable_tensors["opacity"]
 
-    def load_ply(self, path, use_train_test_exp = False):
+    #################################################### Comp 3dgs ####################################################
+
+
+    def bin2dec(self, b, bits):
+        """Convert binary b to decimal integer.
+
+        Code from: https://stackoverflow.com/questions/55918468/convert-integer-to-pytorch-tensor-of-binary-bits
+        """
+        mask = 2 ** torch.arange(bits - 1, -1, -1).to(b.device, torch.int64)
+        return torch.sum(mask * b, -1)
+
+    def construct_list_of_attributes(self, save_att=None):
+        # l = ['x', 'y', 'z', 'nx', 'ny', 'nz']
+        l = []
+        if 'xyz' in save_att:
+            l += ['x', 'y', 'z']
+        if 'normals' in save_att:
+            l += ['nx', 'ny', 'nz']
+        # All channels except the 3 DC
+        if 'f_dc' in save_att:
+            for i in range(self._features_dc.shape[1]*self._features_dc.shape[2]):
+                l.append('f_dc_{}'.format(i))
+        if 'f_rest' in save_att:
+            for i in range(self._features_rest.shape[1]*self._features_rest.shape[2]):
+                l.append('f_rest_{}'.format(i))
+        l.append('opacity')
+        if 'scale' in save_att:
+            for i in range(self._scaling.shape[1]):
+                l.append('scale_{}'.format(i))
+        if 'rotation' in save_att:
+            for i in range(self._rotation.shape[1]):
+                l.append('rot_{}'.format(i))
+        return l
+
+
+    def save_ply(self, path, save_q=[], save_attributes=None):
+        mkdir_p(os.path.dirname(path))
+
+        xyz = self._xyz.detach().cpu().numpy()
+        f_dc = self._features_dc.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
+        opacities = self._opacity.detach().cpu().numpy()
+
+        f_rest = self._features_rest.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
+        scale = self._scaling.detach().cpu().numpy()
+        rotation = self._rotation.detach().cpu().numpy()
+
+        if 'pos' in save_q:
+            xyz = self._xyz_q.detach().cpu().numpy()
+        if 'dc' in save_q or 'sh_dc' in save_q:
+            f_dc = self._features_dc_q.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
+        if 'sh' in save_q or 'sh_dc' in save_q:
+            f_rest = self._features_rest_q.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
+        if 'scale' in save_q or 'scale_rot' in save_q:
+            scale = self._scaling_q.detach().cpu().numpy()
+        if 'rot' in save_q or 'scale_rot' in save_q:
+            rotation = self._rotation_q.detach().cpu().numpy()
+
+        all_attributes = {'xyz': xyz, 'f_dc': f_dc, 'f_rest': f_rest, 'opacities': opacities,
+                        'scale': scale, 'rotation': rotation}
+        if save_attributes is None:
+            save_attributes = list(all_attributes.keys())
+        dtype_full = [(attribute, 'f4') for attribute in self.construct_list_of_attributes(save_attributes)]
+        print('non-quantized attributes: ', save_attributes)
+        print('quantized attributes: ', save_q)
+
+        elements = np.empty(xyz.shape[0], dtype=dtype_full)
+        attributes = np.concatenate(tuple([val for (key, val) in all_attributes.items() if key in save_attributes]), axis=1)
+        elements[:] = list(map(tuple, attributes))
+        el = PlyElement.describe(elements, 'vertex')
+        PlyData([el]).write(path)
+
+    def load_ply(self, path, load_quant=False, use_train_test_exp = False):
+        print(f"load quant: {load_quant}")
         plydata = PlyData.read(path)
+        quant_params = []
+
+        #### Original 3d GS ####
         if use_train_test_exp:
             exposure_file = os.path.join(os.path.dirname(path), os.pardir, os.pardir, "exposure.json")
             if os.path.exists(exposure_file):
@@ -272,46 +354,89 @@ class GaussianModel:
             else:
                 print(f"No exposure to be loaded at {exposure_file}")
                 self.pretrained_exposures = None
+        ########################
 
-        xyz = np.stack((np.asarray(plydata.elements[0]["x"]),
-                        np.asarray(plydata.elements[0]["y"]),
-                        np.asarray(plydata.elements[0]["z"])),  axis=1)
-        opacities = np.asarray(plydata.elements[0]["opacity"])[..., np.newaxis]
+        # Load indices and codebook for quantized params
+        if load_quant:
+            base_path = '/'.join(path.split('/')[:-1])
+            inds_file = join(base_path, 'kmeans_inds.bin')
+            codebook_file = join(base_path, 'kmeans_centers.pth')
+            args_file = join(base_path, 'kmeans_args.npy')
+            codebook = torch.load(codebook_file)
+            args_dict = np.load(args_file, allow_pickle=True).item()
+            quant_params = args_dict['params']
+            loaded_bitarray = bitarray()
+            with open(inds_file, 'rb') as file:
+                loaded_bitarray.fromfile(file)
+            # bitarray pads 0s if array is not divisible by 8. ignore extra 0s at end when loading
+            total_len = args_dict['total_len']
+            loaded_bitarray = loaded_bitarray[:total_len].tolist()
+            indices = np.reshape(loaded_bitarray, (-1, args_dict['n_bits']))
+            indices = self.bin2dec(torch.from_numpy(indices), args_dict['n_bits'])
+            indices = np.reshape(indices.cpu().numpy(), (len(quant_params), -1))
+            indices_dict = OrderedDict()
+            for i, key in enumerate(args_dict['params']):
+                indices_dict[key] = indices[i]
 
-        features_dc = np.zeros((xyz.shape[0], 3, 1))
-        features_dc[:, 0, 0] = np.asarray(plydata.elements[0]["f_dc_0"])
-        features_dc[:, 1, 0] = np.asarray(plydata.elements[0]["f_dc_1"])
-        features_dc[:, 2, 0] = np.asarray(plydata.elements[0]["f_dc_2"])
+        print(f"quant params: {quant_params}")
+        if 'xyz' in quant_params:
+            xyz = np.expand_dims(codebook['xyz'][indices_dict['xyz']].cpu().numpy(), -1)
+        else:
+            xyz = np.stack((np.asarray(plydata.elements[0]["x"]),
+                            np.asarray(plydata.elements[0]["y"]),
+                            np.asarray(plydata.elements[0]["z"])),  axis=1)
+            opacities = np.asarray(plydata.elements[0]["opacity"])[..., np.newaxis]
 
-        extra_f_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("f_rest_")]
-        extra_f_names = sorted(extra_f_names, key = lambda x: int(x.split('_')[-1]))
-        assert len(extra_f_names)==3*(self.max_sh_degree + 1) ** 2 - 3
-        features_extra = np.zeros((xyz.shape[0], len(extra_f_names)))
-        for idx, attr_name in enumerate(extra_f_names):
-            features_extra[:, idx] = np.asarray(plydata.elements[0][attr_name])
-        # Reshape (P,F*SH_coeffs) to (P, F, SH_coeffs except DC)
-        features_extra = features_extra.reshape((features_extra.shape[0], 3, (self.max_sh_degree + 1) ** 2 - 1))
+        if 'dc' in quant_params:
+            features_dc = np.expand_dims(codebook['dc'][indices_dict['dc']].cpu().numpy(), -1)
+        else:
+            features_dc = np.zeros((xyz.shape[0], 3, 1))
+            features_dc[:, 0, 0] = np.asarray(plydata.elements[0]["f_dc_0"])
+            features_dc[:, 1, 0] = np.asarray(plydata.elements[0]["f_dc_1"])
+            features_dc[:, 2, 0] = np.asarray(plydata.elements[0]["f_dc_2"])
 
-        scale_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("scale_")]
-        scale_names = sorted(scale_names, key = lambda x: int(x.split('_')[-1]))
-        scales = np.zeros((xyz.shape[0], len(scale_names)))
-        for idx, attr_name in enumerate(scale_names):
-            scales[:, idx] = np.asarray(plydata.elements[0][attr_name])
+        if 'sh' in quant_params:
+            features_extra = codebook['sh'][indices_dict['sh']].cpu().numpy()
+            features_extra = features_extra.reshape((features_extra.shape[0], (self.max_sh_degree + 1) ** 2 - 1, 3))
+            features_extra = features_extra.transpose((0, 2, 1))
+        else:
+            extra_f_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("f_rest_")]
+            extra_f_names = sorted(extra_f_names, key = lambda x: int(x.split('_')[-1]))
+            assert len(extra_f_names)==3*(self.max_sh_degree + 1) ** 2 - 3
+            features_extra = np.zeros((xyz.shape[0], len(extra_f_names)))
+            for idx, attr_name in enumerate(extra_f_names):
+                features_extra[:, idx] = np.asarray(plydata.elements[0][attr_name])
+            # Reshape (P,F*SH_coeffs) to (P, F, SH_coeffs except DC)
+            features_extra = features_extra.reshape((features_extra.shape[0], 3, (self.max_sh_degree + 1) ** 2 - 1))
 
-        rot_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("rot")]
-        rot_names = sorted(rot_names, key = lambda x: int(x.split('_')[-1]))
-        rots = np.zeros((xyz.shape[0], len(rot_names)))
-        for idx, attr_name in enumerate(rot_names):
-            rots[:, idx] = np.asarray(plydata.elements[0][attr_name])
+        if 'scale' in quant_params:
+            scales = codebook['scale'][indices_dict['scale']].cpu().numpy()
+        else:
+            scale_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("scale_")]
+            scale_names = sorted(scale_names, key=lambda x: int(x.split('_')[-1]))
+            scales = np.zeros((xyz.shape[0], len(scale_names)))
+            for idx, attr_name in enumerate(scale_names):
+                scales[:, idx] = np.asarray(plydata.elements[0][attr_name])
+
+        if 'rot' in quant_params:
+            rots = codebook['rot'][indices_dict['rot']].cpu().numpy()
+        else:
+            rot_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("rot")]
+            rot_names = sorted(rot_names, key = lambda x: int(x.split('_')[-1]))
+            rots = np.zeros((xyz.shape[0], len(rot_names)))
+            for idx, attr_name in enumerate(rot_names):
+                rots[:, idx] = np.asarray(plydata.elements[0][attr_name])
 
         self._xyz = nn.Parameter(torch.tensor(xyz, dtype=torch.float, device="cuda").requires_grad_(True))
         self._features_dc = nn.Parameter(torch.tensor(features_dc, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
         self._features_rest = nn.Parameter(torch.tensor(features_extra, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
+
         self._opacity = nn.Parameter(torch.tensor(opacities, dtype=torch.float, device="cuda").requires_grad_(True))
         self._scaling = nn.Parameter(torch.tensor(scales, dtype=torch.float, device="cuda").requires_grad_(True))
         self._rotation = nn.Parameter(torch.tensor(rots, dtype=torch.float, device="cuda").requires_grad_(True))
 
         self.active_sh_degree = self.max_sh_degree
+        ###################################################################################################################
 
     def replace_tensor_to_optimizer(self, tensor, name):
         optimizable_tensors = {}
@@ -467,6 +592,21 @@ class GaussianModel:
         self.tmp_radii = None
 
         torch.cuda.empty_cache()
+
+    #################################################### Comp 3dgs ####################################################
+    def prune(self, min_opacity, extent, max_screen_size,radii):
+        prune_mask = (self.get_opacity < min_opacity).squeeze()
+
+        self.tmp_radii = radii
+        if max_screen_size:
+            big_points_vs = self.max_radii2D > max_screen_size
+            big_points_ws = self.get_scaling_nq.max(dim=1).values > 0.1 * extent
+            prune_mask = torch.logical_or(torch.logical_or(prune_mask, big_points_vs), big_points_ws)
+        self.prune_points(prune_mask)
+        self.tmp_radii = None
+
+        torch.cuda.empty_cache()
+    ###################################################################################################################
 
     def add_densification_stats(self, viewspace_point_tensor, update_filter):
         self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter,:2], dim=-1, keepdim=True)

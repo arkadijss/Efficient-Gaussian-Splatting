@@ -8,7 +8,17 @@
 #
 # For inquiries contact  george.drettakis@inria.fr
 #
+import sys
+import pdb
+from os.path import join
+import datetime
+import json
+import time
+from bitarray import bitarray
 
+import numpy as np
+import torch
+from random import randint
 import os
 import torch
 from random import randint
@@ -24,6 +34,8 @@ from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
 from lpipsPyTorch import lpips
 from methods import method_handles, Method
+from scene.kmeans_quantize import Quantize_kMeans
+
 
 try:
     from torch.utils.tensorboard import SummaryWriter
@@ -78,6 +90,32 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
     method.init_mask_blur()
 
+    #################################################### Comp 3dgs ####################################################
+    num_gaussians_per_iter = []
+    # k-Means quantization
+    quantized_params = args.quant_params
+    n_cls = args.kmeans_ncls
+    n_cls_sh = args.kmeans_ncls_sh
+    n_cls_dc = args.kmeans_ncls_dc
+    n_it = args.kmeans_iters
+    kmeans_st_iter = args.kmeans_st_iter
+    freq_cls_assn = args.kmeans_freq
+    if 'pos' in quantized_params:
+        kmeans_pos_q = Quantize_kMeans(num_clusters=n_cls_dc, num_iters=n_it)
+    if 'dc' in quantized_params:
+        kmeans_dc_q = Quantize_kMeans(num_clusters=n_cls_dc, num_iters=n_it)
+    if 'sh' in quantized_params:
+        kmeans_sh_q = Quantize_kMeans(num_clusters=n_cls_sh, num_iters=n_it)
+    if 'scale' in quantized_params:
+        kmeans_sc_q = Quantize_kMeans(num_clusters=n_cls, num_iters=n_it)
+    if 'rot' in quantized_params:
+        kmeans_rot_q = Quantize_kMeans(num_clusters=n_cls, num_iters=n_it)
+    if 'scale_rot' in quantized_params:
+        kmeans_scrot_q = Quantize_kMeans(num_clusters=n_cls, num_iters=n_it)
+    if 'sh_dc' in quantized_params:
+        kmeans_shdc_q = Quantize_kMeans(num_clusters=n_cls_sh, num_iters=n_it)
+    ###################################################################################################################
+
     for iteration in range(first_iter, opt.iterations + 1):
         if network_gui.conn == None:
             network_gui.try_connect()
@@ -106,6 +144,29 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         viewpoint_cam = viewpoint_stack.pop(rand_idx)
         vind = viewpoint_indices.pop(rand_idx)
 
+        #################################################### Comp 3dgs ####################################################
+        # quantize params
+        if iteration > kmeans_st_iter:
+            if iteration % freq_cls_assn == 1:
+                assign = True
+            else:
+                assign = False
+            if 'pos' in quantized_params:
+                kmeans_pos_q.forward_pos(gaussians, assign=assign)
+            if 'dc' in quantized_params:
+                kmeans_dc_q.forward_dc(gaussians, assign=assign)
+            if 'sh' in quantized_params:
+                kmeans_sh_q.forward_frest(gaussians, assign=assign)
+            if 'scale' in quantized_params:
+                kmeans_sc_q.forward_scale(gaussians, assign=assign)
+            if 'rot' in quantized_params:
+                kmeans_rot_q.forward_rot(gaussians, assign=assign)
+            if 'scale_rot' in quantized_params:
+                kmeans_scrot_q.forward_scale_rot(gaussians, assign=assign)
+            if 'sh_dc' in quantized_params:
+                kmeans_shdc_q.forward_dcfrest(gaussians, assign=assign)
+        ###################################################################################################################
+
         # Render
         if (iteration - 1) == debug_from:
             pipe.debug = True
@@ -128,6 +189,16 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             ssim_value = ssim(image, gt_image)
 
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim_value)
+
+        #################################################### Comp 3dgs ####################################################
+        if args.opacity_reg:
+            if iteration > args.max_prune_iter or iteration < 15000:
+                lambda_reg = 0.
+            else:
+                lambda_reg = args.lambda_reg
+            L_reg_op = gaussians.get_opacity.sum()
+            loss += lambda_reg * L_reg_op
+        ###################################################################################################################
 
         # Depth regularization
         Ll1depth_pure = 0.0
@@ -162,11 +233,38 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, method.render, (pipe, background, 1., SPARSE_ADAM_AVAILABLE, None, dataset.train_test_exp), dataset.train_test_exp)
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
-                scene.save(iteration)
+                #################################################### Comp 3dgs ####################################################
+                # Save only the non-quantized parameters in ply file.
+                all_attributes = {'xyz': 'xyz', 'dc': 'f_dc', 'sh': 'f_rest', 'opacities': 'opacities',
+                                  'scale': 'scale', 'rot': 'rotation'}
+                save_attributes = [val for (key, val) in all_attributes.items() if key not in quantized_params]
+                if iteration > kmeans_st_iter:
+                    scene.save(iteration, save_q=quantized_params, save_attributes=save_attributes)
+                    
+                    # Save indices and codebook for quantized parameters
+                    kmeans_dict = {'rot': kmeans_rot_q, 'scale': kmeans_sc_q, 'sh': kmeans_sh_q, 'dc': kmeans_dc_q}
+                    kmeans_list = []
+                    for param in quantized_params:
+                        kmeans_list.append(kmeans_dict[param])
+                    out_dir = join(scene.model_path, 'point_cloud/iteration_%d' % iteration)
+                    save_kmeans(kmeans_list, quantized_params, out_dir)
+                else:
+                    scene.save(iteration, save_q=[])
+                ###################################################################################################################
 
             # Densification
             if iteration < opt.densify_until_iter:
                 method.densify(visibility_filter, scene, iteration, viewspace_point_tensor, radii, dataset, render_pkg, image, pipe, background)
+
+            #################################################### Comp 3dgs ####################################################
+            # Prune Gaussians every 1000 iterations from iter 15000 to max_prune_iter if using opacity regularization
+            if args.opacity_reg and iteration > 15000:
+                if iteration <= args.max_prune_iter and iteration % 1000 == 0:
+                    print('Num Gaussians: ', gaussians._xyz.shape[0])
+                    size_threshold = None
+                    gaussians.prune(0.005, scene.cameras_extent, size_threshold, radii)
+                    print('Num Gaussians after prune: ', gaussians._xyz.shape[0])
+            ###################################################################################################################
 
             # Optimizer step
             if iteration < opt.iterations:
@@ -183,6 +281,46 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if (iteration in checkpoint_iterations):
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
+
+#################################################### Comp 3dgs ####################################################
+def dec2binary(x, n_bits=None):
+    """Convert decimal integer x to binary.
+
+    Code from: https://stackoverflow.com/questions/55918468/convert-integer-to-pytorch-tensor-of-binary-bits
+    """
+    if n_bits is None:
+        n_bits = torch.ceil(torch.log2(x)).type(torch.int64)
+    mask = 2**torch.arange(n_bits-1, -1, -1).to(x.device, x.dtype)
+    return x.unsqueeze(-1).bitwise_and(mask).ne(0)
+
+def save_kmeans(kmeans_list, quantized_params, out_dir):
+    """Save the codebook and indices of KMeans.
+
+    """
+    # Convert to bitarray object to save compressed version
+    # saving as npy or pth will use 8bits per digit (or boolean) for the indices
+    # Convert to binary, concat the indices for all params and save.
+    bitarray_all = bitarray([])
+    for kmeans in kmeans_list:
+        n_bits = int(np.ceil(np.log2(len(kmeans.cls_ids))))
+        assignments = dec2binary(kmeans.cls_ids, n_bits)
+        bitarr = bitarray(list(assignments.cpu().numpy().flatten()))
+        bitarr = bitarray(list(assignments.cpu().numpy().flatten()))
+        bitarray_all.extend(bitarr)
+    with open(join(out_dir, 'kmeans_inds.bin'), 'wb') as file:
+        bitarray_all.tofile(file)
+
+    # Save details needed for loading
+    args_dict = {}
+    args_dict['params'] = quantized_params
+    args_dict['n_bits'] = n_bits
+    args_dict['total_len'] = len(bitarray_all)
+    np.save(join(out_dir, 'kmeans_args.npy'), args_dict)
+    centers_dict = {param: kmeans.centers for (kmeans, param) in zip(kmeans_list, quantized_params)}
+
+    # Save codebook
+    torch.save(centers_dict, join(out_dir, 'kmeans_centers.pth'))
+###################################################################################################################
 
 def prepare_output_and_logger(args):    
     if not args.model_path:
@@ -225,7 +363,7 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                 ssims = []
                 lpipss = []
                 for idx, viewpoint in enumerate(config['cameras']):
-                    image = torch.clamp(renderFunc(viewpoint, scene.gaussians, *renderArgs)["render"], 0.0, 1.0)
+                    image = torch.clamp(renderFunc(viewpoint, *renderArgs)["render"], 0.0, 1.0)
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
                     if train_test_exp:
                         image = image[..., image.shape[-1] // 2:]
@@ -272,8 +410,8 @@ if __name__ == "__main__":
     parser.add_argument('--port', type=int, default=6009)
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
-    parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000, 30_000])
-    parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 30_000])
+    parser.add_argument("--test_iterations", nargs="+", type=int, default=[1_000, 7_000, 30_000])
+    parser.add_argument("--save_iterations", nargs="+", type=int, default=[1_000, 7_000, 30_000])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument('--disable_viewer', action='store_true', default=False)
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
@@ -286,6 +424,33 @@ if __name__ == "__main__":
     parser.add_argument("--sampling_factor", type=float, default = 0.5)
 
     parser.add_argument("--imp_metric", required=True, type=str, default = None)
+    
+    #################################################### Comp 3dgs ####################################################
+    # Compress3D parameters
+    parser.add_argument('--kmeans_st_iter', type=int, default=60000,
+                        help='Start k-Means based vector quantization from this iteration')
+    parser.add_argument('--kmeans_ncls', type=int, default=4096,
+                        help='Number of clusters in k-Means quantization')
+    parser.add_argument('--kmeans_ncls_sh', type=int, default=4096,
+                        help='Number of clusters in k-Means quantization of spherical harmonics')
+    parser.add_argument('--kmeans_ncls_dc', type=int, default=4096,
+                        help='Number of clusters in k-Means quantization of DC component of color')
+    parser.add_argument('--kmeans_iters', type=int, default=1,
+                        help='Number of assignment and centroid calculation iterations in k-Means')
+    parser.add_argument('--kmeans_freq', type=int, default=100,
+                        help='Frequency of cluster assignment in k-Means')
+    parser.add_argument('--grad_thresh', type=float, default=0.0002,
+                        help='threshold on xyz gradients for densification')
+    parser.add_argument("--quant_params", nargs="+", type=str, default=['sh', 'dc', 'scale', 'rot'])
+
+    # Opacity regularization parameters
+    parser.add_argument('--max_prune_iter', type=int, default=20000,
+                        help='Iteration till which pruning is done')
+    parser.add_argument('--opacity_reg', action='store_true', default=False,
+                        help='use opacity regularization during training')
+    parser.add_argument('--lambda_reg', type=float, default=0.,
+                        help='Weight for opacity regularization in loss')
+    ###################################################################################################################
 
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
