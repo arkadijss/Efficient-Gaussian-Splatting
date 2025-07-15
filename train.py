@@ -61,7 +61,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         sys.exit(f"Trying to use sparse adam but it is not installed, please install the correct rasterizer using pip install [3dgs_accel].")
 
     first_iter = 0
-    tb_writer = prepare_output_and_logger(dataset)
+    tb_writer = prepare_output_and_logger(dataset, opt, pipe)
     gaussians = GaussianModel(dataset.sh_degree, opt.optimizer_type)
     scene = Scene(dataset, gaussians)
     gaussians.training_setup(opt)
@@ -322,24 +322,27 @@ def save_kmeans(kmeans_list, quantized_params, out_dir):
     torch.save(centers_dict, join(out_dir, 'kmeans_centers.pth'))
 ###################################################################################################################
 
-def prepare_output_and_logger(args):    
-    if not args.model_path:
+def prepare_output_and_logger(data_args,opt_args,pipe_args):    
+    if not data_args.model_path:
         if os.getenv('OAR_JOB_ID'):
             unique_str=os.getenv('OAR_JOB_ID')
         else:
             unique_str = str(uuid.uuid4())
-        args.model_path = os.path.join("./output/", unique_str[0:10])
+        data_args.model_path = os.path.join("./output/", unique_str[0:10])
         
     # Set up output folder
-    print("Output folder: {}".format(args.model_path))
-    os.makedirs(args.model_path, exist_ok = True)
+    print("Output folder: {}".format(data_args.model_path))
+    os.makedirs(data_args.model_path, exist_ok = True)
     with open(os.path.join(args.model_path, "cfg_args"), 'w') as cfg_log_f:
-        cfg_log_f.write(str(Namespace(**vars(args))))
+        cfg_log_f.write(str(Namespace(**vars(data_args))))
+
+    with open(os.path.join(data_args.model_path, "args.json"), 'w') as f:
+        json.dump({"args": vars(args),"dataset_args": vars(data_args),"opt_args": vars(opt_args),"pipe_args": vars(pipe_args)},f,indent=4)
 
     # Create Tensorboard writer
     tb_writer = None
     if TENSORBOARD_FOUND:
-        tb_writer = SummaryWriter(args.model_path)
+        tb_writer = SummaryWriter(data_args.model_path)
     else:
         print("Tensorboard not available: not logging progress")
     return tb_writer
@@ -349,6 +352,7 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
         tb_writer.add_scalar('train_loss_patches/l1_loss', Ll1.item(), iteration)
         tb_writer.add_scalar('train_loss_patches/total_loss', loss.item(), iteration)
         tb_writer.add_scalar('iter_time', elapsed, iteration)
+        tb_writer.add_scalar('mem', torch.cuda.memory_allocated(0), iteration)
 
     # Report test and samples of training set
     if iteration in testing_iterations:
@@ -394,9 +398,12 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                 if tb_writer:
                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - l1_loss', l1_test, iteration)
                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - psnr', psnr_test, iteration)
+                    tb_writer.add_scalar(config['name'] + '/loss_viewpoint - ssim', ssims_test, iteration)
+                    tb_writer.add_scalar(config['name'] + '/loss_viewpoint - lpips', lpipss_test, iteration)
 
         if tb_writer:
             tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)
+            tb_writer.add_histogram("scene/size_histogram", torch.norm(scene.gaussians.get_scaling,ord=2,dim=-1), iteration)
             tb_writer.add_scalar('total_points', scene.gaussians.get_xyz.shape[0], iteration)
         torch.cuda.empty_cache()
 
@@ -410,7 +417,7 @@ if __name__ == "__main__":
     parser.add_argument('--port', type=int, default=6009)
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
-    parser.add_argument("--test_iterations", nargs="+", type=int, default=[1_000, 7_000, 30_000])
+    parser.add_argument("--test_iterations", nargs="+", type=int, default=[int(1000*i) for i in range(31)])
     parser.add_argument("--save_iterations", nargs="+", type=int, default=[1_000, 7_000, 30_000])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument('--disable_viewer', action='store_true', default=False)
