@@ -77,6 +77,7 @@ class GaussianSplatting(Method):
         if iteration % self.opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == self.opt.densify_from_iter):
             self.gaussians.reset_opacity()
 
+        return False
 
 class MiniSplatting(Method):
     def init_mask_blur(self):
@@ -96,6 +97,7 @@ class MiniSplatting(Method):
         return render_imp(viewpoint_camera, self.gaussians, pipe, bg_color, scaling_modifier)
     
     def densify(self, visibility_filter: torch.Tensor, scene: Scene, iteration: int, viewspace_point_tensor: torch.Tensor, radii: torch.Tensor, dataset, render_pkg, image, pipe, background):
+        reset_viewpoint_stack = False
         # Keep track of max radii in image-space for pruning
         gaussians = self.gaussians
         args = self.args
@@ -152,7 +154,7 @@ class MiniSplatting(Method):
             gaussians.training_setup(opt)
             self.mask_blur = torch.zeros(gaussians._xyz.shape[0], device='cuda')
             torch.cuda.empty_cache()
-            viewpoint_stack = scene.getTrainCameras().copy()
+            reset_viewpoint_stack = True
 
         if iteration == args.simp_iteration1:
             imp_score = torch.zeros(gaussians._xyz.shape[0]).cuda()
@@ -196,7 +198,7 @@ class MiniSplatting(Method):
             
             gaussians.training_setup(opt)
             torch.cuda.empty_cache()
-            viewpoint_stack = scene.getTrainCameras().copy()
+            reset_viewpoint_stack = True
 
         if iteration == args.simp_iteration2:
             imp_score = torch.zeros(gaussians._xyz.shape[0]).cuda()
@@ -225,6 +227,8 @@ class MiniSplatting(Method):
             gaussians.prune_points(non_prune_mask==False)
             gaussians.training_setup(opt)
             torch.cuda.empty_cache()   
+
+        return reset_viewpoint_stack
 
 
 method_handles = {

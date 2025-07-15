@@ -255,7 +255,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
             # Densification
             if iteration < opt.densify_until_iter:
-                method.densify(visibility_filter, scene, iteration, viewspace_point_tensor, radii, dataset, render_pkg, image, pipe, background)
+                reset_viewpoint_stack = method.densify(visibility_filter, scene, iteration, viewspace_point_tensor, radii, dataset, render_pkg, image, pipe, background)
+                if reset_viewpoint_stack:
+                    viewpoint_stack = None
 
             #################################################### Comp 3dgs ####################################################
             # Prune Gaussians every 1000 iterations from iter 15000 to max_prune_iter if using opacity regularization
@@ -405,27 +407,27 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
         if tb_writer:
             tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)
             tb_writer.add_histogram("scene/size_histogram", torch.linalg.norm(scene.gaussians.get_scaling,ord=2,dim=-1), iteration)
+            
             x = scene.gaussians.get_xyz.cpu().numpy().astype('float32')
             perm = np.random.permutation(np.arange(x.shape[0]))
-            inv_perm = np.argsort(perm)
-
             x = x[perm,:]
-            x = np.array_split(x,max(int(x.shape[0]/400000),1))
 
-            distances = []
-            for e in x:
-                cpu_index = faiss.IndexFlatL2(3) 
-                gpu_index = faiss.index_cpu_to_all_gpus(cpu_index)  
+            base_equals_query = False
+            if x.shape[1]<=400000:
+                base_equals_query = True
 
-                gpu_index.add(e) 
+            xb = x if base_equals_query else x[200000:,:]    
+            xq = x[:200000,:]
+            
+            
+            cpu_index = faiss.IndexFlatL2(3) 
+            gpu_index = faiss.index_cpu_to_all_gpus(cpu_index)  
 
-                dist, _ = gpu_index.search(e, 1)
-                distances.append(dist[:,0])
+            gpu_index.add(np.ascontiguousarray(xb)) 
 
-            distances = np.concatenate(distances)
-            # not neccessary but feels wrong not to do
-            distances = distances[inv_perm]
-            tb_writer.add_histogram("scene/cdist_min_histogram", torch.min(cdist,dim=-1), iteration)
+            dist, _ = gpu_index.search(np.ascontiguousarray(xq), 2) if base_equals_query else gpu_index.search(np.ascontiguousarray(xq), 1)
+            dist = dist[:,1] if base_equals_query else dist[:,0]
+            tb_writer.add_histogram("scene/est_min_cdist_histogram", dist, iteration)
             tb_writer.add_scalar('total_points', scene.gaussians.get_xyz.shape[0], iteration)
         torch.cuda.empty_cache()
 
@@ -439,7 +441,7 @@ if __name__ == "__main__":
     parser.add_argument('--port', type=int, default=6009)
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
-    parser.add_argument("--test_iterations", nargs="+", type=int, default=[int(1000*i) for i in range(31)])
+    parser.add_argument("--test_iterations", nargs="+", type=int, default=[int(2500*i) for i in range(int(30000/2500)+1)])
     parser.add_argument("--save_iterations", nargs="+", type=int, default=[1_000, 7_000, 30_000])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument('--disable_viewer', action='store_true', default=False)
