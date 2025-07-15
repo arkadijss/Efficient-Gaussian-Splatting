@@ -35,6 +35,7 @@ from arguments import ModelParams, PipelineParams, OptimizationParams
 from lpipsPyTorch import lpips
 from methods import method_handles, Method
 from scene.kmeans_quantize import Quantize_kMeans
+import faiss
 
 
 try:
@@ -403,7 +404,28 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
 
         if tb_writer:
             tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)
-            tb_writer.add_histogram("scene/size_histogram", torch.norm(scene.gaussians.get_scaling,ord=2,dim=-1), iteration)
+            tb_writer.add_histogram("scene/size_histogram", torch.linalg.norm(scene.gaussians.get_scaling,ord=2,dim=-1), iteration)
+            x = scene.gaussians.get_xyz.cpu().numpy().astype('float32')
+            perm = np.random.permutation(np.arange(x.shape[0]))
+            inv_perm = np.argsort(perm)
+
+            x = x[perm,:]
+            x = np.array_split(x,max(int(x.shape[0]/400000),1))
+
+            distances = []
+            for e in x:
+                cpu_index = faiss.IndexFlatL2(3) 
+                gpu_index = faiss.index_cpu_to_all_gpus(cpu_index)  
+
+                gpu_index.add(e) 
+
+                dist, _ = gpu_index.search(e, 1)
+                distances.append(dist[:,0])
+
+            distances = np.concatenate(distances)
+            # not neccessary but feels wrong not to do
+            distances = distances[inv_perm]
+            tb_writer.add_histogram("scene/cdist_min_histogram", torch.min(cdist,dim=-1), iteration)
             tb_writer.add_scalar('total_points', scene.gaussians.get_xyz.shape[0], iteration)
         torch.cuda.empty_cache()
 
