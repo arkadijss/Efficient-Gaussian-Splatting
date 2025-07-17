@@ -1,7 +1,8 @@
-dataset="room"
+dataset_path=$1
+dataset=$2
 
 CUDA_VISIBLE_DEVICES=0 python train.py \
-  -s="360_v2/$dataset" \
+  -s="$dataset_path/$dataset" \
   -m="output/orig/$dataset" \
   --imp_metric "outdoor" \
   --kmeans_st_iter 10000000000000000 \
@@ -10,14 +11,14 @@ CUDA_VISIBLE_DEVICES=0 python train.py \
   --eval
 
 CUDA_VISIBLE_DEVICES=0 python train.py \
-  -s="360_v2/$dataset" \
+  -s="$dataset_path/$dataset" \
   -m="output/orig_depth_reg/$dataset" \
   --imp_metric "outdoor" \
   --kmeans_st_iter 10000000000000000 \
   --eval
 
 CUDA_VISIBLE_DEVICES=0 python train.py \
-  -s="360_v2/$dataset" \
+  -s="$dataset_path/$dataset" \
   -m="output/minsci/$dataset" \
   --method "mini" \
   --imp_metric "outdoor" \
@@ -28,7 +29,7 @@ CUDA_VISIBLE_DEVICES=0 python train.py \
 
 
 CUDA_VISIBLE_DEVICES=0 python train.py \
-  -s="360_v2/$dataset" \
+  -s="$dataset_path/$dataset" \
   -m="output/compact3d/$dataset" \
   --imp_metric "outdoor" \
   --kmeans_ncls "32768" \
@@ -46,7 +47,7 @@ CUDA_VISIBLE_DEVICES=0 python train.py \
   --eval \
 
 CUDA_VISIBLE_DEVICES=0 python train.py \
-  -s="360_v2/$dataset" \
+  -s="$dataset_path/$dataset" \
   -m="output/mini_compact3d/$dataset" \
   --method "mini" \
   --imp_metric "outdoor" \
@@ -65,7 +66,7 @@ CUDA_VISIBLE_DEVICES=0 python train.py \
   --eval \
 
 CUDA_VISIBLE_DEVICES=0 python train.py \
-  -s="360_v2/$dataset" \
+  -s="$dataset_path/$dataset" \
   -m="output/mini_lessdepth/$dataset" \
   --method "mini" \
   --imp_metric "outdoor" \
@@ -77,7 +78,7 @@ CUDA_VISIBLE_DEVICES=0 python train.py \
 
 
 CUDA_VISIBLE_DEVICES=0 python train.py \
-  -s="360_v2/$dataset" \
+  -s="$dataset_path/$dataset" \
   -m="output/mini_lessdepth_opacity/$dataset" \
   --method "mini" \
   --imp_metric "outdoor" \
@@ -92,7 +93,7 @@ CUDA_VISIBLE_DEVICES=0 python train.py \
 
 
 CUDA_VISIBLE_DEVICES=0 python train.py \
-  -s="360_v2/$dataset" \
+  -s="$dataset_path/$dataset" \
   -m="output/mini_opacity/$dataset" \
   --method "mini" \
   --imp_metric "outdoor" \
@@ -105,7 +106,7 @@ CUDA_VISIBLE_DEVICES=0 python train.py \
   --eval
 
 CUDA_VISIBLE_DEVICES=0 python train.py \
-  -s="360_v2/$dataset" \
+  -s="$dataset_path/$dataset" \
   -m="output/orig_opacity/$dataset" \
   --method "orig" \
   --imp_metric "outdoor" \

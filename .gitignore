@@ -7,3 +7,7 @@ diff_rasterization/dist
 tensorboard_3d
 screenshots
 360_v2
+run.sh
+run.py
+render.sh
+__pycache__

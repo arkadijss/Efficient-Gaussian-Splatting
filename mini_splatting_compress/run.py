@@ -25,6 +25,7 @@ from utils.loss_utils import ssim
 from lpipsPyTorch import lpips
 from utils.image_utils import psnr
 import json
+
 try:
     from diff_gaussian_rasterization import SparseGaussianAdam
     SPARSE_ADAM_AVAILABLE = True
@@ -193,56 +194,6 @@ def compress(dataset : ModelParams, iteration : int, pipeline : PipelineParams, 
 
 
 
-def decompress(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool, separate_sh : bool):
-    with torch.no_grad():
-        gaussians = GaussianModel(dataset.sh_degree)
-        scene = Scene(dataset, gaussians, shuffle=False)
-
-        dir_path=os.path.join(scene.model_path,
-                    "point_cloud",
-                    "iteration_" + str(iteration),
-                    "compressed")
-
-        data = np.load(dir_path+'/compressed_gs.npz')
-
-        pos=data['arr_0']
-        CT_q=data['arr_1']
-        Qstep=data['arr_2']
-        depth=data['arr_3']
-
-        pos=torch.tensor(pos).cuda()
-        CT_q=torch.tensor(CT_q).cuda()
-        Qstep=torch.tensor(Qstep).cuda()
-
-
-        # voxlize
-        pos_voxlized=(pos-pos.min())/(pos.max()-pos.min())
-        pos_voxlized=torch.round(pos_voxlized*(2**depth-1))
-        pos_voxlized, pos_idx = np.unique(pos_voxlized.detach().cpu().numpy(), axis=0, return_index=True)     
-
-        # inverse RAHT
-        feat_rec = inv_haar3D(pos_voxlized, CT_q*(Qstep).item(), int(depth))
-
-        num_g_voxlized=pos_voxlized.shape[0]
-
-
-        gaussians._xyz = pos
-        gaussians._features_dc = feat_rec[:, :3].reshape(num_g_voxlized, -1, 3).float()
-        gaussians._features_rest = feat_rec[:, 3:48].reshape(num_g_voxlized, -1, 3)
-
-        gaussians._scaling = feat_rec[:, 48:51].reshape(num_g_voxlized, 3).float()
-        gaussians._rotation = feat_rec[:, 51:55].reshape(num_g_voxlized, 4).float()
-        gaussians._opacity = feat_rec[:, 55:56].reshape(num_g_voxlized, 1).float()
-        gaussians.active_sh_degree = dataset.sh_degree
-
-        bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
-        background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
-
-        render_set(dataset.model_path, "test_compressed", iteration, scene.getTestCameras(), gaussians, pipeline, background, dataset.train_test_exp, separate_sh)
-
-    
-        print()
-
 
 if __name__ == "__main__":
     # Set up command line argument parser
@@ -266,13 +217,13 @@ if __name__ == "__main__":
     # compress
     file_size = compress(model.extract(args), args.iteration, pipeline.extract(args), args.skip_train, args.skip_test) 
     # decompress and render       
-    decompress(model.extract(args), args.iteration, pipeline.extract(args), args.skip_train, args.skip_test, SPARSE_ADAM_AVAILABLE)
+    #decompress(model.extract(args), args.iteration, pipeline.extract(args), args.skip_train, args.skip_test, SPARSE_ADAM_AVAILABLE)
     #evaluate
-    val_ssim, val_psnr, val_lpips = evaluate([model.extract(args).model_path])
+    #val_ssim, val_psnr, val_lpips = evaluate([model.extract(args).model_path])
 
-    print()
-    print('ssim: ', val_ssim)
-    print('psnr: ', val_psnr)
-    print('lpips: ', val_lpips)
-    print('file_size: %f mb'%file_size)
+    #print()
+    #print('ssim: ', val_ssim)
+    #print('psnr: ', val_psnr)
+    #print('lpips: ', val_lpips)
+    #print('file_size: %f mb'%file_size)
 
