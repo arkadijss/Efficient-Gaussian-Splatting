@@ -38,14 +38,14 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
     density_path = os.path.join(model_path, name, "ours_{}".format(iteration), "density")
     gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt")
 
-    if os.path.exists(render_path) and not overwrite:
+    if os.path.exists(os.path.join(model_path, name, "ours_{}".format(iteration),"stats.json")) and not overwrite:
         return
 
     makedirs(render_path, exist_ok=True)
     makedirs(gts_path, exist_ok=True)
     makedirs(density_path, exist_ok=True)
 
-    stats = {"l1_loss" : [], "psnr" : [],"ssim" : [],"lpips" : [],"fps" : []}
+    stats = {"l1_loss" : [], "psnr" : [],"ssim" : [],"lpips" : [],"fps" : [], "num_gaussians" : gaussians.get_xyz.shape[0]}
 
     mask = lambda l : l
     density_gaussians = copy.deepcopy(gaussians)

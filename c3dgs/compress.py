@@ -128,12 +128,13 @@ def run_vq(
     optim_params: OptimizationParams,
     pipeline_params: PipelineParams,
     comp_params: CompressionParams,
+    load_compact3d_quant : bool
 ):
     gaussians = GaussianModel(
         model_params.sh_degree, quantization=not optim_params.not_quantization_aware
     )
     scene = Scene(
-        model_params, gaussians, load_iteration=comp_params.load_iteration, shuffle=True
+        model_params, gaussians, load_iteration=comp_params.load_iteration, shuffle=True, load_compact3d_quant=load_compact3d_quant
     )
 
     if comp_params.start_checkpoint:
@@ -243,11 +244,11 @@ def run_vq(
 
     # eval model
     print("evaluating...")
-    metrics = render_and_eval(gaussians, scene, model_params, pipeline_params)
-    metrics["size"] = file_size
-    print(metrics)
-    with open(f"{comp_params.output_vq}/results.json","w") as f:
-        json.dump({f"ours_{iteration}":metrics},f,indent=4)
+    #metrics = render_and_eval(gaussians, scene, model_params, pipeline_params)
+    #metrics["size"] = file_size
+    #print(metrics)
+    #with open(f"{comp_params.output_vq}/results.json","w") as f:
+    #    json.dump({f"ours_{iteration}":metrics},f,indent=4)
 
 if __name__ == "__main__":
     parser = ArgumentParser(description="Compression script parameters")
@@ -256,6 +257,8 @@ if __name__ == "__main__":
     pipeline = PipelineParams(parser)
     op = OptimizationParams(parser)
     comp = CompressionParams(parser)
+    parser.add_argument("--load_compact3d_quant", action="store_true",
+                        help='load quantized parameters')
     args = get_combined_args(parser)
 
     if args.output_vq is None:
@@ -266,4 +269,4 @@ if __name__ == "__main__":
     pipeline_params = pipeline.extract(args)
     comp_params = comp.extract(args)
 
-    run_vq(model_params, optim_params, pipeline_params, comp_params)
+    run_vq(model_params, optim_params, pipeline_params, comp_params,args.load_compact3d_quant)

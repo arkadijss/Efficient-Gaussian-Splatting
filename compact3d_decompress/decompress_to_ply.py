@@ -10,6 +10,9 @@
 #
 # For inquiries contact  george.drettakis@inria.fr
 #
+import sys
+import os
+sys.path.insert(0, os.path.join(sys.path[0], "../"))
 
 import torch
 from scene import Scene

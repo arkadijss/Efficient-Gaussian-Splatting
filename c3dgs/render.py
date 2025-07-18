@@ -8,18 +8,21 @@
 #
 # For inquiries contact  george.drettakis@inria.fr
 #
+import sys
+import os
+sys.path.insert(0, os.path.join(sys.path[0], "../"))
 
 import gc
 import torch
-from scene import Scene
+from c3dgs.scene import Scene
 import os
 from tqdm import tqdm
 from os import makedirs
-from gaussian_renderer import render
+from c3dgs.gaussian_renderer import render
 import torchvision
 from c3dgs.utils.general_utils import safe_state
 from argparse import ArgumentParser
-from arguments import ModelParams, PipelineParams, get_combined_args
+from c3dgs.arguments import ModelParams, PipelineParams, get_combined_args
 from c3dgs.gaussian_renderer import GaussianModel
 import time
 import copy
@@ -33,23 +36,23 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
     render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders")
     density_path = os.path.join(model_path, name, "ours_{}".format(iteration), "density")
     gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt")
-
-    if os.path.exists(render_path) and not overwrite:
+    
+    if os.path.exists(os.path.join(model_path, name, "ours_{}".format(iteration),"stats.json")) and not overwrite:
         return
 
     makedirs(render_path, exist_ok=True)
     makedirs(gts_path, exist_ok=True)
     makedirs(density_path, exist_ok=True)
 
-    stats = {"l1_loss" : [], "psnr" : [],"ssim" : [],"lpips" : [],"fps" : []}
+    stats = {"l1_loss" : [], "psnr" : [],"ssim" : [],"lpips" : [],"fps" : [], "num_gaussians" : gaussians.get_xyz.shape[0]}
 
-    mask = lambda l : l
+    mask = lambda l : l.cuda()
     density_gaussians = copy.deepcopy(gaussians)
     density_gaussians._xyz = mask(gaussians._xyz)
     density_gaussians._rotation = mask(gaussians._rotation)
-    density_gaussians._opacity = mask(-torch.ones_like(gaussians._opacity)*1)
-    density_gaussians._scaling = mask(-torch.ones_like(gaussians._scaling)*10)
-    density_gaussians._features_dc = mask(torch.ones_like(gaussians._features_dc))
+    density_gaussians._opacity = mask(-torch.ones_like(gaussians._opacity)*1.0)
+    density_gaussians._scaling = mask(-torch.ones_like(gaussians._scaling)*10.0)
+    density_gaussians._features_dc = mask(torch.ones_like(gaussians._features_dc)*1.0)
     density_gaussians._features_rest = mask(gaussians._features_rest)
 
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
@@ -64,7 +67,7 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
         stats["lpips"].append(lpips(rendering, gt, net_type='vgg').cpu().detach().numpy())
         stats["fps"].append(1/(end-start))
 
-        density = render(view, density_gaussians, pipeline, torch.tensor([0, 0, 0]))["render"]
+        density = render(view, density_gaussians, pipeline, torch.tensor([0.0, 0.0, 0.0],device="cuda"))["render"]
 
         torchvision.utils.save_image(rendering, os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
         torchvision.utils.save_image(gt, os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))

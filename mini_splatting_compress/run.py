@@ -128,10 +128,10 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
         torchvision.utils.save_image(gt, os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
 
 
-def compress(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool):
+def compress(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool,load_comapct3d_quant : bool):
     with torch.no_grad():
         gaussians = GaussianModel(dataset.sh_degree)
-        scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False)
+        scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False,load_quant=load_comapct3d_quant)
 
         dir_path=os.path.join(scene.model_path,
                     "point_cloud",
@@ -204,6 +204,7 @@ if __name__ == "__main__":
     parser.add_argument("--skip_train", action="store_true")
     parser.add_argument("--skip_test", action="store_true")
     parser.add_argument("--quiet", action="store_true")
+    parser.add_argument("--load_comapct3d_quant", action="store_true")
 
     args = get_combined_args(parser)
 
@@ -215,7 +216,7 @@ if __name__ == "__main__":
     # Initialize system state (RNG)
     
     # compress
-    file_size = compress(model.extract(args), args.iteration, pipeline.extract(args), args.skip_train, args.skip_test) 
+    file_size = compress(model.extract(args), args.iteration, pipeline.extract(args), args.skip_train, args.skip_test,args.load_comapct3d_quant) 
     # decompress and render       
     #decompress(model.extract(args), args.iteration, pipeline.extract(args), args.skip_train, args.skip_test, SPARSE_ADAM_AVAILABLE)
     #evaluate

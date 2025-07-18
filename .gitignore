@@ -11,3 +11,6 @@ run.sh
 run.py
 render.sh
 __pycache__
+datasets
+run2.sh
+run3.sh

@@ -30,7 +30,8 @@ class Scene:
         load_iteration=None,
         shuffle=True,
         resolution_scales=[1.0],
-        override_quantization=False
+        override_quantization=False,
+        load_compact3d_quant = False,
     ):
         """b
         :param path: Path to colmap scene main folder.
@@ -100,13 +101,18 @@ class Scene:
             )
 
         if self.loaded_iter:
+            if load_compact3d_quant:
+                fname = "point_cloud_decompressed.*"
+            else:
+                fname= "point_cloud.*"
             self.gaussians.load(
+
                 glob(
                     os.path.join(
                         self.model_path,
                         "point_cloud",
                         "iteration_" + str(self.loaded_iter),
-                        "point_cloud.*",
+                        fname,
                     )
                 )[0],
                 override_quantization=override_quantization

@@ -243,10 +243,25 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     scene.save(iteration, save_q=quantized_params, save_attributes=save_attributes)
                     
                     # Save indices and codebook for quantized parameters
-                    kmeans_dict = {'rot': kmeans_rot_q, 'scale': kmeans_sc_q, 'sh': kmeans_sh_q, 'dc': kmeans_dc_q}
+                    #kmeans_dict = {'rot': kmeans_rot_q, 'scale': kmeans_sc_q, 'sh': kmeans_sh_q, 'dc': kmeans_dc_q}
+                    kmeans_dict = {}
+                    if "rot" in quantized_params:
+                        kmeans_dict["rot"] = kmeans_rot_q
+
+                    if "scale" in quantized_params:
+                        kmeans_dict["scale"] = kmeans_sc_q
+
+                    if "sh" in quantized_params:
+                        kmeans_dict["sh"] = kmeans_sh_q
+
+                    if "dc" in quantized_params:
+                        kmeans_dict["dc"] = kmeans_dc_q
+
                     kmeans_list = []
                     for param in quantized_params:
                         kmeans_list.append(kmeans_dict[param])
+
+    
                     out_dir = join(scene.model_path, 'point_cloud/iteration_%d' % iteration)
                     save_kmeans(kmeans_list, quantized_params, out_dir)
                 else:
@@ -407,7 +422,7 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
         if tb_writer:
             tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)
             tb_writer.add_histogram("scene/size_histogram", torch.linalg.norm(scene.gaussians.get_scaling,ord=2,dim=-1), iteration)
-            
+            """
             x = scene.gaussians.get_xyz.cpu().numpy().astype('float32')
             perm = np.random.permutation(np.arange(x.shape[0]))
             x = x[perm,:]
@@ -428,6 +443,7 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
             dist, _ = gpu_index.search(np.ascontiguousarray(xq), 2) if base_equals_query else gpu_index.search(np.ascontiguousarray(xq), 1)
             dist = dist[:,1] if base_equals_query else dist[:,0]
             tb_writer.add_histogram("scene/est_min_cdist_histogram", dist, iteration)
+            """
             tb_writer.add_scalar('total_points', scene.gaussians.get_xyz.shape[0], iteration)
         torch.cuda.empty_cache()
 
