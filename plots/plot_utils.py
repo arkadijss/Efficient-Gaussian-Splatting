@@ -165,8 +165,50 @@ def plot_images(event_accs, idx, img, zoom_fns = [None]):
 def subdict(d,*ks):
     return {k : d[k] for k in ks}
 
+def get_file_size(file):
+    return os.path.getsize(file)/1024/1024
+
 def get_storage(stats,paths):
-    pass
+    for exp in paths.keys():
+        for comp in paths[exp].keys():
+            for ds in paths[exp][comp].keys():
+                
+                p = paths[exp][comp][ds]
+                if comp == "no compression":
+                    if "compact3d" in exp:
+                        stats[exp][comp][ds]["size"] = get_file_size(os.path.join(p,"../","../","point_cloud","iteration_30000","kmeans_args.npy"))+ get_file_size(os.path.join(p,"../","../","point_cloud","iteration_30000","kmeans_centers.pth"))+ get_file_size(os.path.join(p,"../","../","point_cloud","iteration_30000","kmeans_inds.bin"))+ get_file_size(os.path.join(p,"../","../","point_cloud","iteration_30000","point_cloud.ply"))
+                    else:
+                        stats[exp][comp][ds]["size"] = get_file_size(os.path.join(p,"../","../","point_cloud","iteration_30000","point_cloud.ply"))
+                elif comp == "mini_s":
+                    stats[exp][comp][ds]["size"] = get_file_size(os.path.join(p,"../","../","point_cloud","iteration_30000","compressed","compressed_gs.npz"))
+                elif comp == "c3dgs":
+                    stats[exp][comp][ds]["size"] = get_file_size(os.path.join(p,"../","../","point_cloud","iteration_35000","point_cloud.npz"))
+                elif comp == "light prune":
+                    stats[exp][comp][ds]["size"] = get_file_size(os.path.join(p,"../","../","point_cloud","iteration_5000","point_cloud.ply"))
+                elif comp == "light prune + distill":
+                    stats[exp][comp][ds]["size"] = get_file_size(os.path.join(p,"../","../","point_cloud","iteration_10000","point_cloud.ply"))
+                elif comp == "light prune + distill + vq":
+                    stats[exp][comp][ds]["size"] = sum([get_file_size(os.path.join(p,"../","../","extreme_saving",file)) for file in os.listdir(os.path.join(p,"../","../","extreme_saving"))])
+                else:
+                    pass
+
+def transform_keys(old_dict,transform):
+    return _transform_keys({},old_dict,transform)
+
+def _transform_keys(new_dict,old_dict,transform):
+    for key,val in old_dict.items():
+        if type(val) == dict:
+            if key in transform.keys():
+                new_dict[transform[key]] = _transform_keys({},val,transform)
+            else:
+                new_dict[key] = _transform_keys({},val,transform)
+        else:
+            if key in transform.keys():
+                new_dict[transform[key]] = val
+            else:
+                new_dict[key] = val
+
+    return new_dict
 
 def load_stats(eval_paths):
     stats = copy.deepcopy(eval_paths)
