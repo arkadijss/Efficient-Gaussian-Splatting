@@ -7,7 +7,7 @@ prune_percent=(${4:-0.66})
 prune_decay=(${5:-1})
 v_pow=(${6:-0.1})
 
-declare -a prune_type=${6:-"v_important_score"}
+declare -a prune_type=${7:-"v_important_score"}
 
 exp=${path%/*}
 ds=${path##*/}

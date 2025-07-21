@@ -8,32 +8,82 @@ from scene import Scene
 import os
 from tqdm import tqdm
 from os import makedirs
-from gaussian_renderer import render
 import torchvision
 from utils.general_utils import safe_state
 from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams, get_combined_args
 from gaussian_renderer import GaussianModel
-import numpy as np
 
+import numpy as np
+import copy
+import time
 from Haar3D_torch import haar3D, inv_haar3D
 from utils.sh_utils import SH2RGB
 from pathlib import Path
 from PIL import Image
 import torchvision.transforms.functional as tf
-from utils.loss_utils import ssim
+from utils.loss_utils import l1_loss, ssim
 from lpipsPyTorch import lpips
 from utils.image_utils import psnr
 import json
-from render import render_set
-
+from render_imp import render
 
 try:
-    from diff_gaussian_rasterization import SparseGaussianAdam
+    from diff_gaussian_rasterization_ms import SparseGaussianAdam
     SPARSE_ADAM_AVAILABLE = True
 except:
     SPARSE_ADAM_AVAILABLE = False
 
+def render_set(model_path, name, iteration, views, gaussians, pipeline, background, train_test_exp,overwrite, separate_sh):
+    render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders")
+    density_path = os.path.join(model_path, name, "ours_{}".format(iteration), "density")
+    gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt")
+
+    if os.path.exists(os.path.join(model_path, name, "ours_{}".format(iteration),"stats.json")) and not overwrite:
+        return
+
+    makedirs(render_path, exist_ok=True)
+    makedirs(gts_path, exist_ok=True)
+    makedirs(density_path, exist_ok=True)
+
+    stats = {"l1_loss" : [], "psnr" : [],"ssim" : [],"lpips" : [],"fps" : [], "num_gaussians" : gaussians.get_xyz.shape[0]}
+
+    mask = lambda l : l
+    density_gaussians = copy.deepcopy(gaussians)
+    density_gaussians._xyz = mask(gaussians._xyz)
+    density_gaussians._rotation = mask(gaussians._rotation)
+    density_gaussians._opacity = mask(-torch.ones_like(gaussians._opacity)*1)
+    density_gaussians._scaling = mask(-torch.ones_like(gaussians._scaling)*10)
+    density_gaussians._features_dc = mask(torch.ones_like(gaussians._features_dc))
+    density_gaussians._features_rest = mask(gaussians._features_rest)
+
+    for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
+        start = time.time()
+        rendering = torch.clamp(render(view, gaussians, pipeline, background)["render"],0.0,1.0)
+        end = time.time()
+        gt = torch.clamp(view.original_image[0:3, :, :],0.0,1.0)
+
+        if train_test_exp:
+            rendering = rendering[..., rendering.shape[-1] // 2:]
+            gt = gt[..., gt.shape[-1] // 2:]
+
+        stats["l1_loss"].append(l1_loss(rendering, gt).mean().double().cpu().detach().numpy())
+        stats["psnr"].append(psnr(rendering, gt).mean().double().cpu().detach().numpy())
+        stats["ssim"].append(ssim(rendering, gt).cpu().detach().numpy())
+        stats["lpips"].append(lpips(rendering, gt, net_type='vgg').cpu().detach().numpy())
+        stats["fps"].append(1/(end-start))
+
+        density = render(view, density_gaussians, pipeline, torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32, device="cuda"))["render"]
+
+        torchvision.utils.save_image(rendering, os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
+        torchvision.utils.save_image(gt, os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
+        torchvision.utils.save_image(density, os.path.join(density_path, '{0:05d}'.format(idx) + ".png"))
+
+    for key in stats.keys():
+        stats[key] = np.asarray(stats[key]).mean().item()
+
+    with open(os.path.join(model_path, name, "ours_{}".format(iteration),"stats.json"),"w") as f:
+        json.dump(stats,f,indent=4)
 
 
 
