@@ -174,7 +174,7 @@ def get_storage(stats,paths):
             for ds in paths[exp][comp].keys():
                 
                 p = paths[exp][comp][ds]
-                if comp == "no compression":
+                if comp == "training ckpt":
                     if "compact3d" in exp:
                         stats[exp][comp][ds]["size"] = get_file_size(os.path.join(p,"../","../","point_cloud","iteration_30000","kmeans_args.npy"))+ get_file_size(os.path.join(p,"../","../","point_cloud","iteration_30000","kmeans_centers.pth"))+ get_file_size(os.path.join(p,"../","../","point_cloud","iteration_30000","kmeans_inds.bin"))+ get_file_size(os.path.join(p,"../","../","point_cloud","iteration_30000","point_cloud.ply"))
                     else:

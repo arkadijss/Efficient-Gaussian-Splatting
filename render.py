@@ -36,6 +36,7 @@ except:
 def render_set(model_path, name, iteration, views, gaussians, pipeline, background, train_test_exp,overwrite, separate_sh):
     render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders")
     density_path = os.path.join(model_path, name, "ours_{}".format(iteration), "density")
+    opacity_path = os.path.join(model_path, name, "ours_{}".format(iteration), "opacity")
     gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt")
 
     if os.path.exists(os.path.join(model_path, name, "ours_{}".format(iteration),"stats.json")) and not overwrite:
@@ -44,6 +45,7 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
     makedirs(render_path, exist_ok=True)
     makedirs(gts_path, exist_ok=True)
     makedirs(density_path, exist_ok=True)
+    makedirs(opacity_path, exist_ok=True)
 
     stats = {"l1_loss" : [], "psnr" : [],"ssim" : [],"lpips" : [],"fps" : [], "num_gaussians" : gaussians.get_xyz.shape[0]}
 
@@ -55,6 +57,23 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
     density_gaussians._scaling = mask(-torch.ones_like(gaussians._scaling)*10)
     density_gaussians._features_dc = mask(torch.ones_like(gaussians._features_dc))
     density_gaussians._features_rest = mask(gaussians._features_rest)
+
+    #mask = lambda l : l[gaussians.get_opacity[:,0] > 0.9]
+    opacity_gaussians = copy.deepcopy(gaussians)
+    opacity_gaussians._xyz = mask(gaussians._xyz)
+    opacity_gaussians._rotation = mask(gaussians._rotation)
+    opacity_gaussians._opacity = mask(gaussians._opacity/(gaussians._opacity.shape[0]/10000000))
+    opacity_gaussians._scaling = mask(-torch.ones_like(gaussians._scaling)*10)
+    opacity_gaussians._features_dc = mask(torch.ones_like(gaussians._features_dc))
+    opacity_gaussians._features_rest = mask(gaussians._features_rest)
+
+    #mask = lambda l : l[gaussians.get_opacity[:,0] > 0.9]
+    #gaussians._xyz = mask(gaussians._xyz)
+    #gaussians._rotation = mask(gaussians._rotation)
+    #gaussians._scaling = mask(gaussians._scaling)
+    #gaussians._features_dc = mask(gaussians._features_dc)
+    #gaussians._features_rest = mask(gaussians._features_rest)
+    #gaussians._opacity = mask(gaussians._opacity)
 
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
         start = time.time()
@@ -73,10 +92,13 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
         stats["fps"].append(1/(end-start))
 
         density = render(view, density_gaussians, pipeline, torch.tensor([0, 0, 0], dtype=torch.float32, device="cuda"), use_trained_exp=train_test_exp, separate_sh=SPARSE_ADAM_AVAILABLE)["render"]
+        opacity_density = render(view, opacity_gaussians, pipeline, torch.tensor([0, 0, 0], dtype=torch.float32, device="cuda"), use_trained_exp=train_test_exp, separate_sh=SPARSE_ADAM_AVAILABLE)["render"]
+
 
         torchvision.utils.save_image(rendering, os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
         torchvision.utils.save_image(gt, os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
         torchvision.utils.save_image(density, os.path.join(density_path, '{0:05d}'.format(idx) + ".png"))
+        torchvision.utils.save_image(opacity_density, os.path.join(opacity_path, '{0:05d}'.format(idx) + ".png"))
 
     for key in stats.keys():
         stats[key] = np.asarray(stats[key]).mean().item()

@@ -26,7 +26,7 @@ from simple_knn._C import distCUDA2
 from light_gauss.utils.graphics_utils import BasicPointCloud
 from light_gauss.utils.general_utils import strip_symmetric, build_scaling_rotation
 from icecream import ic
-from vectree.utils import load_vqgaussian, write_ply_data
+from light_gauss.vectree.utils import load_vqgaussian, write_ply_data
 
 
 class GaussianModel:
