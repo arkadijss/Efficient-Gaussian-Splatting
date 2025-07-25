@@ -179,7 +179,7 @@ def get_storage(stats,paths):
                         stats[exp][comp][ds]["size"] = get_file_size(os.path.join(p,"../","../","point_cloud","iteration_30000","kmeans_args.npy"))+ get_file_size(os.path.join(p,"../","../","point_cloud","iteration_30000","kmeans_centers.pth"))+ get_file_size(os.path.join(p,"../","../","point_cloud","iteration_30000","kmeans_inds.bin"))+ get_file_size(os.path.join(p,"../","../","point_cloud","iteration_30000","point_cloud.ply"))
                     else:
                         stats[exp][comp][ds]["size"] = get_file_size(os.path.join(p,"../","../","point_cloud","iteration_30000","point_cloud.ply"))
-                elif comp == "mini_s":
+                elif comp == "mini compression":
                     stats[exp][comp][ds]["size"] = get_file_size(os.path.join(p,"../","../","point_cloud","iteration_30000","compressed","compressed_gs.npz"))
                 elif comp == "c3dgs":
                     stats[exp][comp][ds]["size"] = get_file_size(os.path.join(p,"../","../","point_cloud","iteration_35000","point_cloud.npz"))
